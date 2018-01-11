@@ -8,8 +8,11 @@
 
 class MqttManager
 {
+private:
+    const char* logTag = "mqtt_mgr";
+
 public:
     MqttManager(void);
-}
+};
 
 #endif /* MQTT_MANAGER_H */
