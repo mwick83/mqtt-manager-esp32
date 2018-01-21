@@ -33,6 +33,12 @@ public:
         ERR_NO_RESOURCES = -6,
     } err_t;
 
+    typedef enum {
+        QOS_AT_MOST_ONCE = 0,
+        QOS_AT_LEAST_ONCE = 1,
+        QOS_EXACTLY_ONCE = 2
+    } qos_t;
+
     MqttManager();
     MqttManager(const char* host, uint16_t port, const char* user, const char* password, const char* clientId);
     ~MqttManager();
@@ -41,7 +47,7 @@ public:
     err_t start(void);
     void stop(void);
     bool waitConnected(int32_t timeoutMs);
-    err_t publish(const char *topic, const char *data, int len, int qos, bool retain);
+    err_t publish(const char *topic, const char *data, int len, qos_t qos, bool retain);
 
 private:
     const char* logTag = "mqtt_mgr";

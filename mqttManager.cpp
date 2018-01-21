@@ -262,7 +262,7 @@ bool MqttManager::waitConnected(int32_t timeoutMs)
  *         may happen when many other threads try to publish at the same time.
  * @retval ERR_NO_RESOURCES if there are too many unpublished message in the sending queue.
  */
-MqttManager::err_t MqttManager::publish(const char *topic, const char *data, int len, int qos, bool retain)
+MqttManager::err_t MqttManager::publish(const char *topic, const char *data, int len, qos_t qos, bool retain)
 {
     err_t ret = ERR_OK;
 
