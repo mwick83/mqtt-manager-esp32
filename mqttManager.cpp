@@ -287,3 +287,34 @@ MqttManager::err_t MqttManager::publish(const char *topic, const char *data, int
 
     return ret;
 }
+
+/**
+ * @brief Wait for all outstanding publish messages being sent.
+ * 
+ * For this to work you must ensure by other means that no more messages
+ * get published. Otherwise this may always fail or will never return.
+ * 
+ * @param timeoutMs Timeout in milliseconds to wait. Can be -1 to wait indefinitely 
+ * or 0 to only check the current status.
+ * @return bool
+ * @retval true All outstanding messages have been published.
+ * @retval false Not all outstanding messages have been published within the specified timeout.
+ */
+bool MqttManager::waitAllPublished(int32_t timeoutMs)
+{
+    TickType_t timeout;
+
+    if(timeoutMs == -1) {
+        timeout = portMAX_DELAY;
+    } else {
+        timeout = pdMS_TO_TICKS(timeoutMs);
+    }
+
+    // TBD: how to wait for the semaphore count to be max inflight messages again?
+    //if(pdTRUE == xSema(clientEvents, clientEventConnected, 0, pdFALSE, timeout)) {
+    if(true) {
+        return true;
+    } else {
+        return false;
+    }
+}

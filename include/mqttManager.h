@@ -48,16 +48,20 @@ public:
     void stop(void);
     bool waitConnected(int32_t timeoutMs);
     err_t publish(const char *topic, const char *data, int len, qos_t qos, bool retain);
+    bool waitAllPublished(int32_t timeoutMs);
 
 private:
     const char* logTag = "mqtt_mgr";
 
     // fixed configuration options
-    const uint32_t clientKeepAlive = 120; // (secs)
-    const TickType_t lockAcquireTimeout = pdMS_TO_TICKS(250);
-    const uint32_t publishMsgInFlightMax = 8; // maximum publish messages that have outstanding responses
+    const uint32_t clientKeepAlive = 120; /**< MQTT client keep alive timeout in seconds. */
+    const TickType_t lockAcquireTimeout = pdMS_TO_TICKS(250); /**< Maximum publish lock acquisition time in OS ticks. */
+    const uint32_t publishMsgInFlightMax = MQTT_BUF_SIZE / 128; /**< Maximum number of publish messages that have outstanding responses.
+                                                                 * The value is calculated from the MQTT_BUF_SIZE and an assumed average 
+                                                                 * raw messages size of 128 bytes.
+                                                                 */
 
-    void preinit(void); // Helper to prepare internal state, which is called by both constructors.
+    void preinit(void); /**< Helper function to prepare internal state, which is called by both constructors. */
 
     // static mqtt client callback dispatchers
     static void clientConnectedDispatch(mqtt_client* client, mqtt_event_data_t* eventData);
