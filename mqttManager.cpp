@@ -303,18 +303,30 @@ MqttManager::err_t MqttManager::publish(const char *topic, const char *data, int
 bool MqttManager::waitAllPublished(int32_t timeoutMs)
 {
     TickType_t timeout;
+    TickType_t timeoutStep;
+    bool noInflightMsgs = false;
 
     if(timeoutMs == -1) {
         timeout = portMAX_DELAY;
+        timeoutStep = pdMS_TO_TICKS(250);
     } else {
         timeout = pdMS_TO_TICKS(timeoutMs);
+        timeoutStep = pdMS_TO_TICKS(timeoutMs / 8);
     }
 
-    // TBD: how to wait for the semaphore count to be max inflight messages again?
-    //if(pdTRUE == xSema(clientEvents, clientEventConnected, 0, pdFALSE, timeout)) {
-    if(true) {
-        return true;
-    } else {
-        return false;
+    while(timeout) {
+        if(publishMsgInFlightMax == uxSemaphoreGetCount(publishMessages)) {
+            noInflightMsgs = true;
+            break;
+        } else {
+            if(timeout >= timeoutStep) {
+                timeout -= timeoutStep;
+            } else {
+                timeout = 0;
+            }
+            vTaskDelay(timeoutStep);
+        }
     }
+
+    return noInflightMsgs;
 }
