@@ -1,7 +1,7 @@
 #ifndef MQTT_MANAGER_H
 #define MQTT_MANAGER_H
 
-#include <cstdint>
+#include <stdint.h>
 
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
