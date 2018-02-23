@@ -187,10 +187,10 @@ void MqttManager::clientDisconnected(mqtt_client* client, mqtt_event_data_t* eve
 
 void MqttManager::clientPublished(mqtt_client* client, mqtt_event_data_t* eventData)
 {
-    ESP_LOGD(logTag, "Published.");
-
     // return the publish "slot"
     xSemaphoreGive(publishMessages);
+
+    ESP_LOGD(logTag, "Published. Current in-flight cnt: %d/%d", publishMsgInFlightMax - uxSemaphoreGetCount(publishMessages), publishMsgInFlightMax);
 }
 
 void MqttManager::clientData(mqtt_client* client, mqtt_event_data_t* eventData)
