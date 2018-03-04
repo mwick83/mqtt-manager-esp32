@@ -132,7 +132,7 @@ void MqttManager::clientConnectedDispatch(mqtt_client* client, mqtt_event_data_t
     MqttManager* manager = (MqttManager*) client->userData;
 
     if(nullptr == manager) {
-        ESP_LOGE(manager->logTag, "No valid MqttManager available to dispatch connected event to!")
+        ESP_LOGE("unknown", "No valid MqttManager available to dispatch connected event to!")
     } else {
         manager->clientConnected(client, eventData);
     }
@@ -143,7 +143,7 @@ void MqttManager::clientDisconnectedDispatch(mqtt_client* client, mqtt_event_dat
     MqttManager* manager = (MqttManager*) client->userData;
 
     if(nullptr == manager) {
-        ESP_LOGE(manager->logTag, "No valid MqttManager available to dispatch disconnected event to!")
+        ESP_LOGE("unknown", "No valid MqttManager available to dispatch disconnected event to!")
     } else {
         manager->clientDisconnected(client, eventData);
     }
@@ -154,7 +154,7 @@ void MqttManager::clientPublishedDispatch(mqtt_client* client, mqtt_event_data_t
     MqttManager* manager = (MqttManager*) client->userData;
 
     if(nullptr == manager) {
-        ESP_LOGE(manager->logTag, "No valid MqttManager available to dispatch published event to!")
+        ESP_LOGE("unknown", "No valid MqttManager available to dispatch published event to!")
     } else {
         manager->clientPublished(client, eventData);
     }
@@ -165,7 +165,7 @@ void MqttManager::clientDataDispatch(mqtt_client* client, mqtt_event_data_t* eve
     MqttManager* manager = (MqttManager*) client->userData;
 
     if(nullptr == manager) {
-        ESP_LOGE(manager->logTag, "No valid MqttManager available to dispatch data event to!")
+        ESP_LOGE("unknown", "No valid MqttManager available to dispatch data event to!")
     } else {
         manager->clientData(client, eventData);
     }
@@ -185,6 +185,8 @@ void MqttManager::clientDisconnected(mqtt_client* client, mqtt_event_data_t* eve
     xEventGroupSetBits(clientEvents, clientEventDisconnected);
 }
 
+// TBD: implement some timeout waiting for publish confirmations. Are there no retries sent? Or are they all timing out
+// and we can't map them back to the publish requests?
 void MqttManager::clientPublished(mqtt_client* client, mqtt_event_data_t* eventData)
 {
     // return the publish "slot"
