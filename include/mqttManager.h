@@ -2,6 +2,7 @@
 #define MQTT_MANAGER_H
 
 #include <stdint.h>
+#include <vector>
 
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
@@ -66,14 +67,16 @@ private:
     // static mqtt client callback dispatchers
     static void clientConnectedDispatch(mqtt_client* client, mqtt_event_data_t* eventData);
     static void clientDisconnectedDispatch(mqtt_client* client, mqtt_event_data_t* eventData);
-    static void clientPublishedDispatch(mqtt_client* client, mqtt_event_data_t* eventData);
+    static void clientPublishedDispatch(mqtt_client* client, uint16_t msg_id);
     static void clientDataDispatch(mqtt_client* client, mqtt_event_data_t* eventData);
 
     // actual mqtt client callbacks
     void clientConnected(mqtt_client* client, mqtt_event_data_t* eventData);
     void clientDisconnected(mqtt_client* client, mqtt_event_data_t* eventData);
-    void clientPublished(mqtt_client* client, mqtt_event_data_t* eventData);
+    void clientPublished(mqtt_client* client, uint16_t msg_id);
     void clientData(mqtt_client* client, mqtt_event_data_t* eventData);
+
+    int getPublishMsgInFlightCount(void); /**< Helper function to get the number of publish messages currently in flight. */
 
     // mqtt client + settings
     mqtt_client* client;
@@ -88,8 +91,7 @@ private:
     // multi-threading signalization
     SemaphoreHandle_t publishMutex;
     StaticSemaphore_t publishMutexBuf;
-    SemaphoreHandle_t publishMessages;
-    StaticSemaphore_t publishMessagesBuf;
+    std::vector<uint16_t> publishMsgInFlight;
 };
 
 #endif /* MQTT_MANAGER_H */

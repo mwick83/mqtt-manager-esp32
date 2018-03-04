@@ -18,7 +18,8 @@ void MqttManager::preinit(void)
     clientEvents = xEventGroupCreate();
 
     publishMutex = xSemaphoreCreateMutexStatic(&publishMutexBuf);
-    publishMessages = xSemaphoreCreateCountingStatic(publishMsgInFlightMax, publishMsgInFlightMax, &publishMessagesBuf);
+    publishMsgInFlight.clear();
+    publishMsgInFlight.reserve(publishMsgInFlightMax);
 }
 
 MqttManager::~MqttManager()
@@ -28,7 +29,7 @@ MqttManager::~MqttManager()
         client = nullptr;
     }
 
-    if(publishMessages) vSemaphoreDelete(publishMessages);
+    publishMsgInFlight.clear();
     if(publishMutex) vSemaphoreDelete(publishMutex);
 }
 
@@ -112,7 +113,7 @@ void MqttManager::stop(void)
         xSemaphoreGive(publishMutex);
 
         // Wait till all messages are out
-        while(uxSemaphoreGetCount(publishMessages) < publishMsgInFlightMax) {
+        while(getPublishMsgInFlightCount() > 0) {
             // but poll only as long as wifi is connected
             if((xEventGroupGetBits(wifiEvents) & wifiEventDisconnected) == 0) {
                 vTaskDelay(pdMS_TO_TICKS(250));
@@ -149,14 +150,14 @@ void MqttManager::clientDisconnectedDispatch(mqtt_client* client, mqtt_event_dat
     }
 }
 
-void MqttManager::clientPublishedDispatch(mqtt_client* client, mqtt_event_data_t* eventData)
+void MqttManager::clientPublishedDispatch(mqtt_client* client, uint16_t msg_id)
 {
     MqttManager* manager = (MqttManager*) client->userData;
 
     if(nullptr == manager) {
         ESP_LOGE("unknown", "No valid MqttManager available to dispatch published event to!")
     } else {
-        manager->clientPublished(client, eventData);
+        manager->clientPublished(client, msg_id);
     }
 }
 
@@ -187,12 +188,25 @@ void MqttManager::clientDisconnected(mqtt_client* client, mqtt_event_data_t* eve
 
 // TBD: implement some timeout waiting for publish confirmations. Are there no retries sent? Or are they all timing out
 // and we can't map them back to the publish requests?
-void MqttManager::clientPublished(mqtt_client* client, mqtt_event_data_t* eventData)
+void MqttManager::clientPublished(mqtt_client* client, uint16_t msg_id)
 {
-    // return the publish "slot"
-    xSemaphoreGive(publishMessages);
+    int inFlightCnt = -1;
 
-    ESP_LOGD(logTag, "Published. Current in-flight cnt: %d/%d", publishMsgInFlightMax - uxSemaphoreGetCount(publishMessages), publishMsgInFlightMax);
+    if(pdFALSE == xSemaphoreTake(publishMutex, lockAcquireTimeout)) {
+        ESP_LOGE(logTag, "Couldn't acquire publish lock within timeout");
+    } else {
+        for (std::vector<uint16_t>::iterator it = publishMsgInFlight.begin() ; it != publishMsgInFlight.end(); ++it) {
+            if((*it) == msg_id) {
+                publishMsgInFlight.erase(it);
+                break;
+            }
+        }
+        inFlightCnt = publishMsgInFlight.size();
+
+        xSemaphoreGive(publishMutex);
+    }
+
+    ESP_LOGD(logTag, "Published (msg_id: 0x%04x). Current in-flight cnt: %d/%d", msg_id, inFlightCnt, publishMsgInFlightMax);
 }
 
 void MqttManager::clientData(mqtt_client* client, mqtt_event_data_t* eventData)
@@ -267,6 +281,7 @@ bool MqttManager::waitConnected(int32_t timeoutMs)
 MqttManager::err_t MqttManager::publish(const char *topic, const char *data, int len, qos_t qos, bool retain)
 {
     err_t ret = ERR_OK;
+    uint16_t msgId;
 
     if((xEventGroupGetBits(clientEvents) & clientEventConnected) == 0) {
         ESP_LOGW(logTag, "Publish requested, but MQTT client is disconnected.");
@@ -276,11 +291,12 @@ MqttManager::err_t MqttManager::publish(const char *topic, const char *data, int
             ESP_LOGE(logTag, "Couldn't acquire publish lock within timeout");
             ret = ERR_TIMEOUT;
         } else {
-            if(pdFALSE == xSemaphoreTake(publishMessages, 0)) {
+            if(publishMsgInFlight.size() == publishMsgInFlightMax) {
                 ESP_LOGE(logTag, "Maximum number of in-flight publish messages reached!");
                 ret = ERR_NO_RESOURCES;
             } else {
-                mqtt_publish(client, topic, data, len, qos, retain ? 1 : 0);
+                msgId = mqtt_publish(client, topic, data, len, qos, retain ? 1 : 0);
+                publishMsgInFlight.push_back(msgId);
             }
 
             xSemaphoreGive(publishMutex);
@@ -317,7 +333,7 @@ bool MqttManager::waitAllPublished(int32_t timeoutMs)
     }
 
     while(timeout) {
-        if(publishMsgInFlightMax == uxSemaphoreGetCount(publishMessages)) {
+        if(getPublishMsgInFlightCount() == 0) {
             noInflightMsgs = true;
             break;
         } else {
@@ -331,4 +347,20 @@ bool MqttManager::waitAllPublished(int32_t timeoutMs)
     }
 
     return noInflightMsgs;
+}
+
+int MqttManager::getPublishMsgInFlightCount(void)
+{
+    // If something fails return the maximum number, because this is the worst case
+    int inFlightCnt = publishMsgInFlightMax;
+
+    if(pdFALSE == xSemaphoreTake(publishMutex, lockAcquireTimeout)) {
+        ESP_LOGE(logTag, "Couldn't acquire publish lock within timeout");
+    } else {
+        inFlightCnt = publishMsgInFlight.size();
+
+        xSemaphoreGive(publishMutex);
+    }
+
+    return inFlightCnt;
 }
