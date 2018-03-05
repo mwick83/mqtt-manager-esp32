@@ -18,8 +18,12 @@ void MqttManager::preinit(void)
     clientEvents = xEventGroupCreate();
 
     publishMutex = xSemaphoreCreateMutexStatic(&publishMutexBuf);
-    publishMsgInFlight.clear();
-    publishMsgInFlight.reserve(publishMsgInFlightMax);
+
+    for(int cnt=0; cnt<publishMsgInFlightMax; cnt++) {
+        publishMsgInFlightTimer[cnt] = xTimerCreateStatic("mqttPubTmr", publishMsgInFlightTimeout,
+            pdFALSE, nullptr, clientPublishTimeoutDispatch, &publishMsgInFlightTimerBuf[cnt]);
+    }
+    publishMsgInFlightCnt = 0;
 }
 
 MqttManager::~MqttManager()
@@ -29,7 +33,10 @@ MqttManager::~MqttManager()
         client = nullptr;
     }
 
-    publishMsgInFlight.clear();
+    for(int pos=0; pos < publishMsgInFlightMax; pos++) {
+        xTimerStop(publishMsgInFlightTimer[pos], portMAX_DELAY);
+    }
+
     if(publishMutex) vSemaphoreDelete(publishMutex);
 }
 
@@ -186,8 +193,6 @@ void MqttManager::clientDisconnected(mqtt_client* client, mqtt_event_data_t* eve
     xEventGroupSetBits(clientEvents, clientEventDisconnected);
 }
 
-// TBD: implement some timeout waiting for publish confirmations. Are there no retries sent? Or are they all timing out
-// and we can't map them back to the publish requests?
 void MqttManager::clientPublished(mqtt_client* client, uint16_t msg_id)
 {
     int inFlightCnt = -1;
@@ -195,14 +200,21 @@ void MqttManager::clientPublished(mqtt_client* client, uint16_t msg_id)
     if(pdFALSE == xSemaphoreTake(publishMutex, lockAcquireTimeout)) {
         ESP_LOGE(logTag, "Couldn't acquire publish lock within timeout");
     } else {
-        for (std::vector<uint16_t>::iterator it = publishMsgInFlight.begin() ; it != publishMsgInFlight.end(); ++it) {
-            if((*it) == msg_id) {
-                publishMsgInFlight.erase(it);
+        int pos;
+        for(pos=0; pos < publishMsgInFlightMax; pos++) {
+            if((publishMsgInFlightInfo[pos].valid) && (publishMsgInFlightInfo[pos].msgId == msg_id)) {
+                xTimerStop(publishMsgInFlightTimer[pos], portMAX_DELAY);
+                publishMsgInFlightInfo[pos].valid = false;
+                publishMsgInFlightCnt--;
                 break;
             }
         }
-        inFlightCnt = publishMsgInFlight.size();
 
+        if(pos == publishMsgInFlightMax) {
+            ESP_LOGW(logTag, "Publish msg_id not found. It could have timed out.");
+        }
+
+        inFlightCnt = publishMsgInFlightCnt;
         xSemaphoreGive(publishMutex);
     }
 
@@ -291,12 +303,28 @@ MqttManager::err_t MqttManager::publish(const char *topic, const char *data, int
             ESP_LOGE(logTag, "Couldn't acquire publish lock within timeout");
             ret = ERR_TIMEOUT;
         } else {
-            if(publishMsgInFlight.size() == publishMsgInFlightMax) {
+            if(publishMsgInFlightCnt == publishMsgInFlightMax) {
                 ESP_LOGE(logTag, "Maximum number of in-flight publish messages reached!");
                 ret = ERR_NO_RESOURCES;
             } else {
                 msgId = mqtt_publish(client, topic, data, len, qos, retain ? 1 : 0);
-                publishMsgInFlight.push_back(msgId);
+                int pos;
+                for(pos=0; pos < publishMsgInFlightMax; pos++) {
+                    if(!publishMsgInFlightInfo[pos].valid) {
+                        publishMsgInFlightInfo[pos].valid = true;
+                        publishMsgInFlightInfo[pos].caller = this;
+                        publishMsgInFlightInfo[pos].msgId = msgId;
+                        publishMsgInFlightCnt++;
+
+                        vTimerSetTimerID(publishMsgInFlightTimer[pos], (void*) &publishMsgInFlightInfo[pos]);
+                        xTimerStart(publishMsgInFlightTimer[pos], portMAX_DELAY);
+                        break;
+                    }
+                }
+
+                if(pos == publishMsgInFlightMax) {
+                    ESP_LOGE(logTag, "No free publishMsgInFlightInfo found! This CANNOT happen!");
+                }
             }
 
             xSemaphoreGive(publishMutex);
@@ -357,10 +385,45 @@ int MqttManager::getPublishMsgInFlightCount(void)
     if(pdFALSE == xSemaphoreTake(publishMutex, lockAcquireTimeout)) {
         ESP_LOGE(logTag, "Couldn't acquire publish lock within timeout");
     } else {
-        inFlightCnt = publishMsgInFlight.size();
+        inFlightCnt = publishMsgInFlightCnt;
 
         xSemaphoreGive(publishMutex);
     }
 
     return inFlightCnt;
+}
+
+void MqttManager::clientPublishTimeoutDispatch(TimerHandle_t timer)
+{
+    publish_msg_info_t *timerInfo = (publish_msg_info_t *) pvTimerGetTimerID(timer);
+
+    if(nullptr == timerInfo) {
+        ESP_LOGE("unknown", "No valid publishMsgInFlightInfo available to dispatch timeout event!")
+    } else {
+        (timerInfo->caller)->clientPublishTimeout(timerInfo->msgId);
+    }
+}
+
+void MqttManager::clientPublishTimeout(uint16_t msgId)
+{
+    if(pdFALSE == xSemaphoreTake(publishMutex, lockAcquireTimeout)) {
+        ESP_LOGE(logTag, "Couldn't acquire publish lock within timeout");
+    } else {
+        ESP_LOGW(logTag, "Publishing timed out (msg_id: 0x%04x). Releasing it anyway.", msgId);
+
+        int cnt;
+        for(cnt=0; cnt < publishMsgInFlightMax; cnt++) {
+            if(publishMsgInFlightInfo[cnt].valid && (publishMsgInFlightInfo[cnt].msgId == msgId)) {
+                publishMsgInFlightInfo[cnt].valid = false;
+                publishMsgInFlightCnt--;
+                break;
+            }
+        }
+
+        if(cnt == publishMsgInFlightMax) {
+            ESP_LOGW(logTag, "Publish msg_id not found! Successful publish could have cleared it in the meantime.");
+        }
+
+        xSemaphoreGive(publishMutex);
+    }
 }

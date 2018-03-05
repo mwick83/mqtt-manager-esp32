@@ -57,10 +57,11 @@ private:
     // fixed configuration options
     const uint32_t clientKeepAlive = 120; /**< MQTT client keep alive timeout in seconds. */
     const TickType_t lockAcquireTimeout = pdMS_TO_TICKS(250); /**< Maximum publish lock acquisition time in OS ticks. */
-    const uint32_t publishMsgInFlightMax = MQTT_BUF_SIZE / 128; /**< Maximum number of publish messages that have outstanding responses.
-                                                                 * The value is calculated from the MQTT_BUF_SIZE and an assumed average 
-                                                                 * raw messages size of 128 bytes.
-                                                                 */
+    static const uint32_t publishMsgInFlightMax = MQTT_BUF_SIZE / 128; /**< Maximum number of publish messages that have outstanding responses.
+                                                                        * The value is calculated from the MQTT_BUF_SIZE and an assumed average 
+                                                                        * raw messages size of 128 bytes.
+                                                                        */
+    const TickType_t publishMsgInFlightTimeout = pdMS_TO_TICKS(2500); /**< Time in OS ticks to wait for a publish message acknowledge. */
 
     void preinit(void); /**< Helper function to prepare internal state, which is called by both constructors. */
 
@@ -88,10 +89,22 @@ private:
     const int clientEventConnected = (1<<0);
     const int clientEventDisconnected = (1<<1);
 
-    // multi-threading signalization
+    // publish message in-flight handling
+    typedef struct {
+        bool valid;
+        MqttManager *caller;
+        uint16_t msgId;
+    } publish_msg_info_t;
+
     SemaphoreHandle_t publishMutex;
     StaticSemaphore_t publishMutexBuf;
-    std::vector<uint16_t> publishMsgInFlight;
+    TimerHandle_t publishMsgInFlightTimer[publishMsgInFlightMax];
+    StaticTimer_t publishMsgInFlightTimerBuf[publishMsgInFlightMax];
+    publish_msg_info_t publishMsgInFlightInfo[publishMsgInFlightMax];
+    unsigned int publishMsgInFlightCnt;
+
+    static void clientPublishTimeoutDispatch(TimerHandle_t timer);
+    void clientPublishTimeout(uint16_t msgId);
 };
 
 #endif /* MQTT_MANAGER_H */
