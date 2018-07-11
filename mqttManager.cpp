@@ -91,7 +91,7 @@ MqttManager::err_t MqttManager::start(void)
     }
 
     if(nullptr == client) {
-        ESP_LOGE(logTag, "Failed to start MQTT client!")
+        ESP_LOGE(logTag, "Failed to start MQTT client!");
         return ERR_MQTT_CLIENT_ERR;
     } else {
         ESP_LOGI(logTag, "MqttManager and MQTT client started.");
@@ -140,7 +140,7 @@ void MqttManager::clientConnectedDispatch(mqtt_client* client, mqtt_event_data_t
     MqttManager* manager = (MqttManager*) client->userData;
 
     if(nullptr == manager) {
-        ESP_LOGE("unknown", "No valid MqttManager available to dispatch connected event to!")
+        ESP_LOGE("unknown", "No valid MqttManager available to dispatch connected event to!");
     } else {
         manager->clientConnected(client, eventData);
     }
@@ -151,7 +151,7 @@ void MqttManager::clientDisconnectedDispatch(mqtt_client* client, mqtt_event_dat
     MqttManager* manager = (MqttManager*) client->userData;
 
     if(nullptr == manager) {
-        ESP_LOGE("unknown", "No valid MqttManager available to dispatch disconnected event to!")
+        ESP_LOGE("unknown", "No valid MqttManager available to dispatch disconnected event to!");
     } else {
         manager->clientDisconnected(client, eventData);
     }
@@ -162,7 +162,7 @@ void MqttManager::clientPublishedDispatch(mqtt_client* client, uint16_t msg_id)
     MqttManager* manager = (MqttManager*) client->userData;
 
     if(nullptr == manager) {
-        ESP_LOGE("unknown", "No valid MqttManager available to dispatch published event to!")
+        ESP_LOGE("unknown", "No valid MqttManager available to dispatch published event to!");
     } else {
         manager->clientPublished(client, msg_id);
     }
@@ -173,7 +173,7 @@ void MqttManager::clientDataDispatch(mqtt_client* client, mqtt_event_data_t* eve
     MqttManager* manager = (MqttManager*) client->userData;
 
     if(nullptr == manager) {
-        ESP_LOGE("unknown", "No valid MqttManager available to dispatch data event to!")
+        ESP_LOGE("unknown", "No valid MqttManager available to dispatch data event to!");
     } else {
         manager->clientData(client, eventData);
     }
@@ -398,7 +398,7 @@ void MqttManager::clientPublishTimeoutDispatch(TimerHandle_t timer)
     publish_msg_info_t *timerInfo = (publish_msg_info_t *) pvTimerGetTimerID(timer);
 
     if(nullptr == timerInfo) {
-        ESP_LOGE("unknown", "No valid publishMsgInFlightInfo available to dispatch timeout event!")
+        ESP_LOGE("unknown", "No valid publishMsgInFlightInfo available to dispatch timeout event!");
     } else {
         (timerInfo->caller)->clientPublishTimeout(timerInfo->msgId);
     }
