@@ -12,7 +12,7 @@
 #include "esp_system.h"
 #include "esp_log.h"
 
-#include "mqtt.h"
+#include "mqtt_client.h"
 #include "wifiEvents.h"
 
 /**
@@ -24,7 +24,7 @@
 class MqttManager
 {
 public:
-    typedef enum {
+    typedef enum err_t_ {
         ERR_OK = 0,
         ERR_INVALID_ARG = -1,
         ERR_INVALID_CFG = -2,
@@ -34,17 +34,17 @@ public:
         ERR_NO_RESOURCES = -6,
     } err_t;
 
-    typedef enum {
+    typedef enum qos_t_ {
         QOS_AT_MOST_ONCE = 0,
         QOS_AT_LEAST_ONCE = 1,
         QOS_EXACTLY_ONCE = 2
     } qos_t;
 
     MqttManager();
-    MqttManager(const char* host, uint16_t port, const char* user, const char* password, const char* clientId);
+    MqttManager(const char* host, uint16_t port, bool ssl, const char* user, const char* password, const char* clientId);
     ~MqttManager();
 
-    err_t init(const char* host, uint16_t port, const char* user, const char* password, const char* clientId);
+    err_t init(const char* host, uint16_t port, bool ssl, const char* user, const char* password, const char* clientId);
     err_t start(void);
     void stop(void);
     bool waitConnected(int32_t timeoutMs);
@@ -55,33 +55,34 @@ private:
     const char* logTag = "mqtt_mgr";
 
     // fixed configuration options
-    const uint32_t clientKeepAlive = 120; /**< MQTT client keep alive timeout in seconds. */
+    const int clientKeepAlive = 120; /**< MQTT client keep alive timeout in seconds. */
     const TickType_t lockAcquireTimeout = pdMS_TO_TICKS(250); /**< Maximum publish lock acquisition time in OS ticks. */
-    static const uint32_t publishMsgInFlightMax = MQTT_BUF_SIZE / 128; /**< Maximum number of publish messages that have outstanding responses.
-                                                                        * The value is calculated from the MQTT_BUF_SIZE and an assumed average 
-                                                                        * raw messages size of 128 bytes.
-                                                                        */
+    static const uint32_t publishMsgInFlightMax = MQTT_BUFFER_SIZE_BYTE / 128; /**< Maximum number of publish messages that have outstanding responses.
+                                                                                * The value is calculated from the MQTT_BUF_SIZE and an assumed average 
+                                                                                * raw messages size of 128 bytes.
+                                                                                */
     const TickType_t publishMsgInFlightTimeout = pdMS_TO_TICKS(2500); /**< Time in OS ticks to wait for a publish message acknowledge. */
 
     void preinit(void); /**< Helper function to prepare internal state, which is called by both constructors. */
 
-    // static mqtt client callback dispatchers
-    static void clientConnectedDispatch(mqtt_client* client, mqtt_event_data_t* eventData);
-    static void clientDisconnectedDispatch(mqtt_client* client, mqtt_event_data_t* eventData);
-    static void clientPublishedDispatch(mqtt_client* client, uint16_t msg_id);
-    static void clientDataDispatch(mqtt_client* client, mqtt_event_data_t* eventData);
+    // static mqtt client event handler/dispatcher
+    static esp_err_t clientEventHandler(esp_mqtt_event_handle_t event);
 
     // actual mqtt client callbacks
-    void clientConnected(mqtt_client* client, mqtt_event_data_t* eventData);
-    void clientDisconnected(mqtt_client* client, mqtt_event_data_t* eventData);
-    void clientPublished(mqtt_client* client, uint16_t msg_id);
-    void clientData(mqtt_client* client, mqtt_event_data_t* eventData);
+    void clientConnected(esp_mqtt_event_handle_t eventData);
+    void clientDisconnected(esp_mqtt_event_handle_t eventData);
+    void clientPublished(esp_mqtt_event_handle_t eventData);
+    void clientData(esp_mqtt_event_handle_t eventData);
 
     int getPublishMsgInFlightCount(void); /**< Helper function to get the number of publish messages currently in flight. */
 
     // mqtt client + settings
-    mqtt_client* client;
-    mqtt_settings clientSettings;
+    esp_mqtt_client_handle_t client;
+    esp_mqtt_client_config_t clientSettings;
+    char clientSettingsHost[MQTT_MAX_HOST_LEN];
+    char clientSettingsClientId[MQTT_MAX_CLIENT_LEN];
+    char clientSettingsUsername[MQTT_MAX_USERNAME_LEN];
+    char clientSettingsPassword[MQTT_MAX_PASSWORD_LEN];
     bool clientSettingsOk;
 
     // mqtt client events

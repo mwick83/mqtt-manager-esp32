@@ -5,10 +5,10 @@ MqttManager::MqttManager()
     preinit();
 }
 
-MqttManager::MqttManager(const char* host, uint16_t port, const char* user, const char* password, const char* clientId)
+MqttManager::MqttManager(const char* host, uint16_t port, bool ssl, const char* user, const char* password, const char* clientId)
 {
     preinit();
-    init(host, port, user, password, clientId);
+    init(host, port, ssl, user, password, clientId);
 }
 
 void MqttManager::preinit(void)
@@ -40,39 +40,53 @@ MqttManager::~MqttManager()
     if(publishMutex) vSemaphoreDelete(publishMutex);
 }
 
-MqttManager::err_t MqttManager::init(const char* host, uint16_t port, const char* user, const char* password, const char* clientId)
+MqttManager::err_t MqttManager::init(const char* host, uint16_t port, bool ssl, const char* user, const char* password, const char* clientId)
 {
-    // TBD: own error codes + typedef
     err_t ret = ERR_OK;
 
     if((nullptr == host) || (nullptr == user) || (nullptr == password) || (nullptr == clientId)) {
         ret = ERR_INVALID_ARG;
     }
 
-    if(strlen(host) > CONFIG_MQTT_MAX_HOST_LEN) ret = ERR_INVALID_ARG;
-    if(strlen(user) > CONFIG_MQTT_MAX_USERNAME_LEN) ret = ERR_INVALID_ARG;
-    if(strlen(password) > CONFIG_MQTT_MAX_PASSWORD_LEN) ret = ERR_INVALID_ARG;
-    if(strlen(clientId) > CONFIG_MQTT_MAX_CLIENT_LEN) ret = ERR_INVALID_ARG;
+    if(strlen(host) > MQTT_MAX_HOST_LEN) ret = ERR_INVALID_ARG;
+    if(strlen(user) > MQTT_MAX_USERNAME_LEN) ret = ERR_INVALID_ARG;
+    if(strlen(password) > MQTT_MAX_PASSWORD_LEN) ret = ERR_INVALID_ARG;
+    if(strlen(clientId) > MQTT_MAX_CLIENT_LEN) ret = ERR_INVALID_ARG;
 
     if(ret) {
         ESP_LOGE(logTag, "Invalid argument(s) passed in or string(s) too long!");
     } else {
         // prepare MQTT settings
-        strncpy(clientSettings.host, host, CONFIG_MQTT_MAX_HOST_LEN);
-        clientSettings.port = port;
-        strncpy(clientSettings.username, user, CONFIG_MQTT_MAX_USERNAME_LEN);
-        strncpy(clientSettings.password, password, CONFIG_MQTT_MAX_PASSWORD_LEN);
-        clientSettings.clean_session = 0;
-        clientSettings.keepalive = clientKeepAlive;
-        strncpy(clientSettings.client_id, clientId, CONFIG_MQTT_MAX_CLIENT_LEN);
-        clientSettings.auto_reconnect = true;
-        clientSettings.lwt_topic[0] = 0;
-        clientSettings.connected_cb = clientConnectedDispatch;
-        clientSettings.disconnected_cb = clientDisconnectedDispatch;
-        clientSettings.subscribe_cb = NULL;
-        clientSettings.publish_cb = clientPublishedDispatch;
-        clientSettings.data_cb = clientDataDispatch;
+        strncpy(clientSettingsHost, host, MQTT_MAX_HOST_LEN);
+        strncpy(clientSettingsClientId, clientId, MQTT_MAX_CLIENT_LEN);
+        strncpy(clientSettingsUsername, user, MQTT_MAX_USERNAME_LEN);
+        strncpy(clientSettingsPassword, password, MQTT_MAX_PASSWORD_LEN);
 
+        const esp_mqtt_client_config_t settings = {
+            event_handle : clientEventHandler,
+            host : clientSettingsHost,
+            uri : nullptr,
+            port : port,
+            client_id : clientSettingsClientId,
+            username : clientSettingsUsername,
+            password : clientSettingsPassword,
+            lwt_topic : nullptr,
+            lwt_msg : nullptr,
+            lwt_qos : QOS_AT_MOST_ONCE,
+            lwt_retain : true,
+            lwt_msg_len : 0,
+            disable_clean_session : 1,
+            keepalive : clientKeepAlive,
+            disable_auto_reconnect : false,
+            user_context : (void*) this,
+            task_prio : MQTT_TASK_PRIORITY,
+            task_stack : MQTT_TASK_STACK,
+            buffer_size : MQTT_BUFFER_SIZE_BYTE,
+            cert_pem : nullptr,
+            transport : (ssl == true) ? MQTT_TRANSPORT_OVER_SSL : MQTT_TRANSPORT_OVER_TCP
+        };
+
+        memcpy(&clientSettings, &settings, sizeof(esp_mqtt_client_config_t));
         clientSettingsOk = true;
     }
 
@@ -84,7 +98,8 @@ MqttManager::err_t MqttManager::start(void)
     err_t ret = ERR_OK;
 
     if(clientSettingsOk) {
-        client = mqtt_start(&clientSettings, (void*) this);
+        client = esp_mqtt_client_init(&clientSettings);
+        esp_mqtt_client_start(client);
     } else {
         ESP_LOGE(logTag, "MQTT settings not okay! Did you run init()?");
         ret = ERR_INVALID_CFG;
@@ -131,69 +146,66 @@ void MqttManager::stop(void)
         }
 
         ESP_LOGI(logTag, "Stopping MQTT client.");
-        mqtt_stop();
+        esp_mqtt_client_stop(client);
     }
 }
 
-void MqttManager::clientConnectedDispatch(mqtt_client* client, mqtt_event_data_t* eventData)
+esp_err_t MqttManager::clientEventHandler(esp_mqtt_event_handle_t event)
 {
-    MqttManager* manager = (MqttManager*) client->userData;
-
+    //esp_mqtt_client_handle_t client = event->client;
+    MqttManager* manager = (MqttManager*) event->user_context;
+    
     if(nullptr == manager) {
-        ESP_LOGE("unknown", "No valid MqttManager available to dispatch connected event to!");
+        ESP_LOGE("unknown", "No valid MqttManager available to dispatch events to!");
     } else {
-        manager->clientConnected(client, eventData);
+        switch (event->event_id) {
+            case MQTT_EVENT_CONNECTED:
+                manager->clientConnected(event);
+                break;
+            case MQTT_EVENT_DISCONNECTED:
+                manager->clientDisconnected(event);
+                break;
+
+            case MQTT_EVENT_SUBSCRIBED:
+                break;
+            case MQTT_EVENT_DATA:
+                manager->clientData(event);
+                break;
+            case MQTT_EVENT_UNSUBSCRIBED:
+                break;
+
+            case MQTT_EVENT_PUBLISHED:
+                manager->clientPublished(event);
+                break;
+
+            case MQTT_EVENT_ERROR:
+                ESP_LOGE(manager->logTag, "MQTT_EVENT_ERROR occurred!");
+                break;
+            
+            default:
+                ESP_LOGW(manager->logTag, "Unkown event type received!");
+                break;
+        }
     }
+
+    return ESP_OK;
 }
 
-void MqttManager::clientDisconnectedDispatch(mqtt_client* client, mqtt_event_data_t* eventData)
-{
-    MqttManager* manager = (MqttManager*) client->userData;
-
-    if(nullptr == manager) {
-        ESP_LOGE("unknown", "No valid MqttManager available to dispatch disconnected event to!");
-    } else {
-        manager->clientDisconnected(client, eventData);
-    }
-}
-
-void MqttManager::clientPublishedDispatch(mqtt_client* client, uint16_t msg_id)
-{
-    MqttManager* manager = (MqttManager*) client->userData;
-
-    if(nullptr == manager) {
-        ESP_LOGE("unknown", "No valid MqttManager available to dispatch published event to!");
-    } else {
-        manager->clientPublished(client, msg_id);
-    }
-}
-
-void MqttManager::clientDataDispatch(mqtt_client* client, mqtt_event_data_t* eventData)
-{
-    MqttManager* manager = (MqttManager*) client->userData;
-
-    if(nullptr == manager) {
-        ESP_LOGE("unknown", "No valid MqttManager available to dispatch data event to!");
-    } else {
-        manager->clientData(client, eventData);
-    }
-}
-
-void MqttManager::clientConnected(mqtt_client* client, mqtt_event_data_t* eventData)
+void MqttManager::clientConnected(esp_mqtt_event_handle_t eventData)
 {
     ESP_LOGI(logTag, "Connected.");
     xEventGroupSetBits(clientEvents, clientEventConnected);
     xEventGroupClearBits(clientEvents, clientEventDisconnected);
 }
 
-void MqttManager::clientDisconnected(mqtt_client* client, mqtt_event_data_t* eventData)
+void MqttManager::clientDisconnected(esp_mqtt_event_handle_t eventData)
 {
     ESP_LOGI(logTag, "Disconnected.");
     xEventGroupClearBits(clientEvents, clientEventConnected);
     xEventGroupSetBits(clientEvents, clientEventDisconnected);
 }
 
-void MqttManager::clientPublished(mqtt_client* client, uint16_t msg_id)
+void MqttManager::clientPublished(esp_mqtt_event_handle_t eventData)
 {
     int inFlightCnt = -1;
 
@@ -202,7 +214,7 @@ void MqttManager::clientPublished(mqtt_client* client, uint16_t msg_id)
     } else {
         int pos;
         for(pos=0; pos < publishMsgInFlightMax; pos++) {
-            if((publishMsgInFlightInfo[pos].valid) && (publishMsgInFlightInfo[pos].msgId == msg_id)) {
+            if((publishMsgInFlightInfo[pos].valid) && (publishMsgInFlightInfo[pos].msgId == eventData->msg_id)) {
                 xTimerStop(publishMsgInFlightTimer[pos], portMAX_DELAY);
                 publishMsgInFlightInfo[pos].valid = false;
                 publishMsgInFlightCnt--;
@@ -218,13 +230,13 @@ void MqttManager::clientPublished(mqtt_client* client, uint16_t msg_id)
         xSemaphoreGive(publishMutex);
     }
 
-    ESP_LOGD(logTag, "Published (msg_id: 0x%04x). Current in-flight cnt: %d/%d", msg_id, inFlightCnt, publishMsgInFlightMax);
+    ESP_LOGD(logTag, "Published (msg_id: 0x%04x). Current in-flight cnt: %d/%d", eventData->msg_id, inFlightCnt, publishMsgInFlightMax);
 }
 
-void MqttManager::clientData(mqtt_client* client, mqtt_event_data_t* eventData)
+void MqttManager::clientData(esp_mqtt_event_handle_t eventData)
 {
-    unsigned int topicLen = eventData->topic_length;
-    unsigned int dataLen = eventData->data_length;
+    unsigned int topicLen = eventData->topic_len;
+    unsigned int dataLen = eventData->data_len;
 
     char *topicBuf = (char*) malloc(topicLen+1);
     char *dataBuf = (char*) malloc(dataLen+1);
@@ -307,7 +319,7 @@ MqttManager::err_t MqttManager::publish(const char *topic, const char *data, int
                 ESP_LOGE(logTag, "Maximum number of in-flight publish messages reached!");
                 ret = ERR_NO_RESOURCES;
             } else {
-                msgId = mqtt_publish(client, topic, data, len, qos, retain ? 1 : 0);
+                msgId = esp_mqtt_client_publish(client, topic, data, len, qos, retain ? 1 : 0);
                 int pos;
                 for(pos=0; pos < publishMsgInFlightMax; pos++) {
                     if(!publishMsgInFlightInfo[pos].valid) {
