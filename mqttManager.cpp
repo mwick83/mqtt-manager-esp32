@@ -18,16 +18,26 @@ void MqttManager::preinit(void)
     clientEvents = xEventGroupCreate();
 
     publishMutex = xSemaphoreCreateMutexStatic(&publishMutexBuf);
+    subscribeMutex = xSemaphoreCreateMutexStatic(&subscribeMutexBuf);
 
     for(int cnt=0; cnt<publishMsgInFlightMax; cnt++) {
         publishMsgInFlightTimer[cnt] = xTimerCreateStatic("mqttPubTmr", publishMsgInFlightTimeout,
             pdFALSE, nullptr, clientPublishTimeoutDispatch, &publishMsgInFlightTimerBuf[cnt]);
     }
     publishMsgInFlightCnt = 0;
+
+    for(auto& sub : subscriptions) {
+        sub.valid = false;
+        sub.topic = nullptr;
+        sub.qos = QOS_AT_MOST_ONCE;
+        sub.callback = nullptr;
+    }
 }
 
 MqttManager::~MqttManager()
 {
+    // TBD: lock subscriptions
+
     if(client) {
         stop();
         esp_mqtt_client_destroy(client);
@@ -38,7 +48,15 @@ MqttManager::~MqttManager()
         xTimerStop(publishMsgInFlightTimer[pos], portMAX_DELAY);
     }
 
+    for(auto& sub : subscriptions) {
+        if(nullptr != sub.topic) {
+            free(sub.topic);
+            sub.topic = nullptr;
+        }
+    }
+
     if(publishMutex) vSemaphoreDelete(publishMutex);
+    if(subscribeMutex) vSemaphoreDelete(subscribeMutex);
 }
 
 MqttManager::err_t MqttManager::init(const char* host, uint16_t port, bool ssl, const char* user, const char* password, const char* clientId)
@@ -198,6 +216,15 @@ void MqttManager::clientConnected(esp_mqtt_event_handle_t eventData)
     ESP_LOGI(logTag, "Connected.");
     xEventGroupSetBits(clientEvents, clientEventConnected);
     xEventGroupClearBits(clientEvents, clientEventDisconnected);
+
+    // subscribe to all topics again
+    for(auto& sub : subscriptions) {
+        if(sub.valid) {
+            if(-1 == esp_mqtt_client_subscribe(client, sub.topic, sub.qos)) {
+                ESP_LOGE(logTag, "Subscription failed due to mqtt_client error!");
+            }
+        }
+    }
 }
 
 void MqttManager::clientDisconnected(esp_mqtt_event_handle_t eventData)
@@ -240,24 +267,22 @@ void MqttManager::clientData(esp_mqtt_event_handle_t eventData)
     unsigned int topicLen = eventData->topic_len;
     unsigned int dataLen = eventData->data_len;
 
-    char *topicBuf = (char*) malloc(topicLen+1);
-    char *dataBuf = (char*) malloc(dataLen+1);
+    if((nullptr != eventData->topic) && (nullptr != eventData->data)) {
+        bool called = false;
+        for(auto& sub : subscriptions) {
+            if(sub.valid) {
+                if((strlen(sub.topic) == topicLen) && (0 == strncmp(sub.topic, eventData->topic, topicLen))) {
+                    if(nullptr != sub.callback) sub.callback(eventData->topic, eventData->data, dataLen);
+                    called = true;
+                    break;
+                }
+            }
+        }
 
-    if((nullptr != topicBuf) && (nullptr != dataBuf))
-    {
-        memcpy(topicBuf, eventData->topic, topicLen);
-        topicBuf[topicLen] = 0;
-
-        memcpy(dataBuf, eventData->data, dataLen);
-        dataBuf[dataLen] = 0;
-
-        ESP_LOGD(logTag, "topic: %s, data: %s", topicBuf, dataBuf);
-    } else {
-        ESP_LOGE(logTag, "Couldn't allocate memory for topic/data buffer. Ignoring data.");
+        if(!called) {
+            ESP_LOGW(logTag, "Received topic data, but no registered subscription handler matched.");
+        }
     }
-
-    if(nullptr != topicBuf) free(topicBuf);
-    if(nullptr != dataBuf) free(dataBuf);
 }
 
 /**
@@ -446,4 +471,69 @@ void MqttManager::clientPublishTimeout(uint16_t msgId)
 
         xSemaphoreGive(publishMutex);
     }
+}
+
+/**
+ * @brief Subscribe to the specified topic
+ * 
+ * @param topic String of the topic to subscribe to.
+ * @param qos Quality of Service level used to publish.
+ * @param callback The handler function that will be called on reception.
+ * @return MqttManager::err_t
+ * @retval ERR_OK on success.
+ * @retval ERR_INVALID_ARG if one of the arguments is invalid.
+ * @retval ERR_TIMEOUT if the internal subscription lock couldn't be acquired in time. This
+ *         may happen when many other threads try to publish at the same time.
+ * @retval ERR_NO_RESOURCES if there are too many subscribed topics and the subscription can't 
+ *         be fulfiled.
+ */
+MqttManager::err_t MqttManager::subscribe(const char *topic, qos_t qos, subscription_callback_t callback)
+{
+    err_t ret = ERR_OK;
+
+    if(nullptr == callback) return ERR_INVALID_ARG;
+    if(nullptr == topic) return ERR_INVALID_ARG;
+
+    if(pdFALSE == xSemaphoreTake(subscribeMutex, lockAcquireTimeout)) {
+        ESP_LOGE(logTag, "Couldn't acquire subscription lock within timeout!");
+        ret = ERR_TIMEOUT;
+    } else {
+        bool infoAdded = false;
+        for(auto& sub : subscriptions) {
+            if(sub.valid == false) {
+                sub.topic = (char*) calloc(strlen(topic), sizeof(char));
+                if(nullptr == sub.topic) {
+                    ESP_LOGE(logTag, "Error allocating memory for topic subscription.");
+                    ret = ERR_NO_RESOURCES;
+                } else {
+                    sub.valid = true;
+                    sub.callback = callback;
+                    sub.topic = strcpy(sub.topic, topic);
+                    sub.qos = qos;
+                    infoAdded = true;
+                }
+                break;
+            }
+        }
+
+        if((ERR_OK == ret) && (infoAdded == false)) {
+            ESP_LOGE(logTag, "No free subscription slot found!");
+            ret = ERR_NO_RESOURCES;
+        }
+
+        if(ERR_OK == ret) {
+            if((xEventGroupGetBits(clientEvents) & clientEventConnected) == 0) {
+                ESP_LOGD(logTag, "Subscribe requested, but MQTT client is disconnected. Will be done on connect.");
+            } else {
+                if(-1 == esp_mqtt_client_subscribe(client, topic, qos)) {
+                    ESP_LOGE(logTag, "Subscription failed due to mqtt_client error!");
+                    ret = ERR_MQTT_CLIENT_ERR;
+                }
+            }
+        }
+
+        xSemaphoreGive(subscribeMutex);
+    }
+
+    return ret;
 }

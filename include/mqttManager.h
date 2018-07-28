@@ -2,6 +2,7 @@
 #define MQTT_MANAGER_H
 
 #include <stdint.h>
+#include <algorithm>
 
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
@@ -39,6 +40,8 @@ public:
         QOS_EXACTLY_ONCE = 2
     } qos_t;
 
+    typedef void (* subscription_callback_t)(const char* topic, const char* data, int dataLen);
+
     MqttManager();
     MqttManager(const char* host, uint16_t port, bool ssl, const char* user, const char* password, const char* clientId);
     ~MqttManager();
@@ -49,6 +52,7 @@ public:
     bool waitConnected(int32_t timeoutMs);
     err_t publish(const char *topic, const char *data, int len, qos_t qos, bool retain);
     bool waitAllPublished(int32_t timeoutMs);
+    err_t subscribe(const char *topic, qos_t qos, subscription_callback_t callback);
 
 private:
     const char* logTag = "mqtt_mgr";
@@ -61,6 +65,7 @@ private:
                                                                                 * raw messages size of 128 bytes.
                                                                                 */
     const TickType_t publishMsgInFlightTimeout = pdMS_TO_TICKS(3000); /**< Time in OS ticks to wait for a publish message acknowledge. */
+    static const uint32_t subscriptionsMax = 32; /**< Maximum number of subscriptions the manager can handle. */
 
     void preinit(void); /**< Helper function to prepare internal state, which is called by both constructors. */
 
@@ -88,6 +93,18 @@ private:
     EventGroupHandle_t clientEvents;
     const int clientEventConnected = (1<<0);
     const int clientEventDisconnected = (1<<1);
+
+    // topic subscription handling
+    typedef struct subscription_info_t_ {
+        bool valid;
+        char* topic;
+        qos_t qos;
+        subscription_callback_t callback;
+    } subscription_info_t;
+
+    SemaphoreHandle_t subscribeMutex;
+    StaticSemaphore_t subscribeMutexBuf;
+    subscription_info_t subscriptions[subscriptionsMax];
 
     // publish message in-flight handling
     typedef struct publish_msg_info_t_ {
