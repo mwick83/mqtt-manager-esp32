@@ -212,7 +212,7 @@ void MqttManager::clientPublished(esp_mqtt_event_handle_t eventData)
     int inFlightCnt = -1;
 
     if(pdFALSE == xSemaphoreTake(publishMutex, lockAcquireTimeout)) {
-        ESP_LOGE(logTag, "Couldn't acquire publish lock within timeout");
+        ESP_LOGE(logTag, "Couldn't acquire publish lock within timeout!");
     } else {
         int pos;
         for(pos=0; pos < publishMsgInFlightMax; pos++) {
@@ -314,7 +314,7 @@ MqttManager::err_t MqttManager::publish(const char *topic, const char *data, int
         ret = ERR_DISCONNECTED;
     } else {
         if(pdFALSE == xSemaphoreTake(publishMutex, lockAcquireTimeout)) {
-            ESP_LOGE(logTag, "Couldn't acquire publish lock within timeout");
+            ESP_LOGE(logTag, "Couldn't acquire publish lock within timeout!");
             ret = ERR_TIMEOUT;
         } else {
             if(publishMsgInFlightCnt == publishMsgInFlightMax) {
@@ -403,7 +403,7 @@ int MqttManager::getPublishMsgInFlightCount(void)
     int inFlightCnt = publishMsgInFlightMax;
 
     if(pdFALSE == xSemaphoreTake(publishMutex, lockAcquireTimeout)) {
-        ESP_LOGE(logTag, "Couldn't acquire publish lock within timeout");
+        ESP_LOGE(logTag, "Couldn't acquire publish lock within timeout!");
     } else {
         inFlightCnt = publishMsgInFlightCnt;
 
@@ -427,7 +427,7 @@ void MqttManager::clientPublishTimeoutDispatch(TimerHandle_t timer)
 void MqttManager::clientPublishTimeout(uint16_t msgId)
 {
     if(pdFALSE == xSemaphoreTake(publishMutex, lockAcquireTimeout)) {
-        ESP_LOGE(logTag, "Couldn't acquire publish lock within timeout");
+        ESP_LOGE(logTag, "Couldn't acquire publish lock within timeout!");
     } else {
         ESP_LOGW(logTag, "Publishing timed out (msg_id: 0x%04x). Releasing it anyway.", msgId);
 
