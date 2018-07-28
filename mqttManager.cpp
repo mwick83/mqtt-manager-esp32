@@ -30,6 +30,7 @@ MqttManager::~MqttManager()
 {
     if(client) {
         stop();
+        esp_mqtt_client_destroy(client);
         client = nullptr;
     }
 
@@ -88,6 +89,8 @@ MqttManager::err_t MqttManager::init(const char* host, uint16_t port, bool ssl, 
 
         memcpy(&clientSettings, &settings, sizeof(esp_mqtt_client_config_t));
         clientSettingsOk = true;
+
+        client = esp_mqtt_client_init(&clientSettings);
     }
 
     return ret;
@@ -98,7 +101,6 @@ MqttManager::err_t MqttManager::start(void)
     err_t ret = ERR_OK;
 
     if(clientSettingsOk) {
-        client = esp_mqtt_client_init(&clientSettings);
         esp_mqtt_client_start(client);
     } else {
         ESP_LOGE(logTag, "MQTT settings not okay! Did you run init()?");
@@ -305,7 +307,7 @@ bool MqttManager::waitConnected(int32_t timeoutMs)
 MqttManager::err_t MqttManager::publish(const char *topic, const char *data, int len, qos_t qos, bool retain)
 {
     err_t ret = ERR_OK;
-    uint16_t msgId;
+    int msgId;
 
     if((xEventGroupGetBits(clientEvents) & clientEventConnected) == 0) {
         ESP_LOGW(logTag, "Publish requested, but MQTT client is disconnected.");
@@ -320,22 +322,28 @@ MqttManager::err_t MqttManager::publish(const char *topic, const char *data, int
                 ret = ERR_NO_RESOURCES;
             } else {
                 msgId = esp_mqtt_client_publish(client, topic, data, len, qos, retain ? 1 : 0);
-                int pos;
-                for(pos=0; pos < publishMsgInFlightMax; pos++) {
-                    if(!publishMsgInFlightInfo[pos].valid) {
-                        publishMsgInFlightInfo[pos].valid = true;
-                        publishMsgInFlightInfo[pos].caller = this;
-                        publishMsgInFlightInfo[pos].msgId = msgId;
-                        publishMsgInFlightCnt++;
+                if(-1 == msgId) {
+                    ESP_LOGE(logTag, "Publishing failed due to mqtt_client error!");
+                    ret = ERR_MQTT_CLIENT_ERR;
+                } else {
+                    int pos;
+                    for(pos=0; pos < publishMsgInFlightMax; pos++) {
+                        if(!publishMsgInFlightInfo[pos].valid) {
+                            publishMsgInFlightInfo[pos].valid = true;
+                            publishMsgInFlightInfo[pos].caller = this;
+                            publishMsgInFlightInfo[pos].msgId = msgId;
+                            publishMsgInFlightCnt++;
 
-                        vTimerSetTimerID(publishMsgInFlightTimer[pos], (void*) &publishMsgInFlightInfo[pos]);
-                        xTimerStart(publishMsgInFlightTimer[pos], portMAX_DELAY);
-                        break;
+                            vTimerSetTimerID(publishMsgInFlightTimer[pos], (void*) &publishMsgInFlightInfo[pos]);
+                            xTimerStart(publishMsgInFlightTimer[pos], portMAX_DELAY);
+                            break;
+                        }
                     }
-                }
 
-                if(pos == publishMsgInFlightMax) {
-                    ESP_LOGE(logTag, "No free publishMsgInFlightInfo found! This CANNOT happen!");
+                    if(pos == publishMsgInFlightMax) {
+                        ESP_LOGE(logTag, "No free publishMsgInFlightInfo found! This CANNOT happen!");
+                        ret = ERR_NO_RESOURCES;
+                    }
                 }
             }
 

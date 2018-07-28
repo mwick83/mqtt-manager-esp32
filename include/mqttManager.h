@@ -2,7 +2,6 @@
 #define MQTT_MANAGER_H
 
 #include <stdint.h>
-#include <vector>
 
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
@@ -61,7 +60,7 @@ private:
                                                                                 * The value is calculated from the MQTT_BUF_SIZE and an assumed average 
                                                                                 * raw messages size of 128 bytes.
                                                                                 */
-    const TickType_t publishMsgInFlightTimeout = pdMS_TO_TICKS(2500); /**< Time in OS ticks to wait for a publish message acknowledge. */
+    const TickType_t publishMsgInFlightTimeout = pdMS_TO_TICKS(3000); /**< Time in OS ticks to wait for a publish message acknowledge. */
 
     void preinit(void); /**< Helper function to prepare internal state, which is called by both constructors. */
 
@@ -91,7 +90,7 @@ private:
     const int clientEventDisconnected = (1<<1);
 
     // publish message in-flight handling
-    typedef struct {
+    typedef struct publish_msg_info_t_ {
         bool valid;
         MqttManager *caller;
         uint16_t msgId;
