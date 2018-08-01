@@ -272,7 +272,7 @@ void MqttManager::clientData(esp_mqtt_event_handle_t eventData)
         for(auto& sub : subscriptions) {
             if(sub.valid) {
                 if((strlen(sub.topic) == topicLen) && (0 == strncmp(sub.topic, eventData->topic, topicLen))) {
-                    if(nullptr != sub.callback) sub.callback(eventData->topic, eventData->data, dataLen);
+                    if(nullptr != sub.callback) sub.callback(eventData->topic, topicLen, eventData->data, dataLen);
                     called = true;
                     break;
                 }

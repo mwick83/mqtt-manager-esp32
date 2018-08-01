@@ -40,7 +40,7 @@ public:
         QOS_EXACTLY_ONCE = 2
     } qos_t;
 
-    typedef void (* subscription_callback_t)(const char* topic, const char* data, int dataLen);
+    typedef void (* subscription_callback_t)(const char* topic, int topicLen, const char* data, int dataLen);
 
     MqttManager();
     MqttManager(const char* host, uint16_t port, bool ssl, const char* user, const char* password, const char* clientId);
