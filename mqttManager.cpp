@@ -102,7 +102,10 @@ MqttManager::err_t MqttManager::init(const char* host, uint16_t port, bool ssl, 
             task_stack : MQTT_TASK_STACK,
             buffer_size : MQTT_BUFFER_SIZE_BYTE,
             cert_pem : nullptr,
-            transport : (ssl == true) ? MQTT_TRANSPORT_OVER_SSL : MQTT_TRANSPORT_OVER_TCP
+            client_cert_pem : nullptr,
+            client_key_pem : nullptr,
+            transport : (ssl == true) ? MQTT_TRANSPORT_OVER_SSL : MQTT_TRANSPORT_OVER_TCP,
+            refresh_connection_after_ms : 0
         };
 
         memcpy(&clientSettings, &settings, sizeof(esp_mqtt_client_config_t));
