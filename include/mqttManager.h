@@ -43,10 +43,12 @@ public:
     typedef void (* subscription_callback_t)(const char* topic, int topicLen, const char* data, int dataLen);
 
     MqttManager();
-    MqttManager(const char* host, uint16_t port, bool ssl, const char* user, const char* password, const char* clientId);
+    MqttManager(const char* host, uint16_t port, bool ssl, const char* user, const char* password, const char* clientId,
+        bool cleanSession, int reconnectTimeoutMs);
     ~MqttManager();
 
-    err_t init(const char* host, uint16_t port, bool ssl, const char* user, const char* password, const char* clientId);
+    err_t init(const char* host, uint16_t port, bool ssl, const char* user, const char* password, const char* clientId,
+        bool cleanSession, int reconnectTimeoutMs);
     err_t start(void);
     void stop(void);
     bool waitConnected(int32_t timeoutMs);
@@ -66,6 +68,14 @@ private:
                                                                                 */
     const TickType_t publishMsgInFlightTimeout = pdMS_TO_TICKS(3000); /**< Time in OS ticks to wait for a publish message acknowledge. */
     static const uint32_t subscriptionsMax = 32; /**< Maximum number of subscriptions the manager can handle. */
+    const int reconnectTimeoutMsDflt = 10000; /**< MQTT client reconnect timeout in milliseconds (default). */
+
+    // general config options which my be changed at runtime
+    TickType_t reconnectTimeoutTicks = pdMS_TO_TICKS(10000); /**< MQTT client reconnect timeout in ticks. */
+    bool autoReconnect = true; /**< Enable MQTT client auto reconnect. */
+
+    // misc state
+    bool stopRequested = false;
 
     void preinit(void); /**< Helper function to prepare internal state, which is called by both constructors. */
 
@@ -122,6 +132,12 @@ private:
 
     static void clientPublishTimeoutDispatch(TimerHandle_t timer);
     void clientPublishTimeout(uint16_t msgId);
+
+    // reconnect timer
+    TimerHandle_t reconnectTimer;
+    StaticTimer_t reconnectTimerBuf;
+
+    static void reconnectTimeoutDispatch(TimerHandle_t timer);
 };
 
 #endif /* MQTT_MANAGER_H */

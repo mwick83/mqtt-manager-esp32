@@ -5,16 +5,18 @@ MqttManager::MqttManager()
     preinit();
 }
 
-MqttManager::MqttManager(const char* host, uint16_t port, bool ssl, const char* user, const char* password, const char* clientId)
+MqttManager::MqttManager(const char* host, uint16_t port, bool ssl, const char* user, const char* password, 
+    const char* clientId, bool cleanSession, int reconnectTimeoutMs)
 {
     preinit();
-    init(host, port, ssl, user, password, clientId);
+    init(host, port, ssl, user, password, clientId, cleanSession, reconnectTimeoutMs);
 }
 
 void MqttManager::preinit(void)
 {
     client = nullptr;
     clientSettingsOk = false;
+    stopRequested = false;
     clientEvents = xEventGroupCreate();
 
     publishMutex = xSemaphoreCreateMutexStatic(&publishMutexBuf);
@@ -25,6 +27,9 @@ void MqttManager::preinit(void)
             pdFALSE, nullptr, clientPublishTimeoutDispatch, &publishMsgInFlightTimerBuf[cnt]);
     }
     publishMsgInFlightCnt = 0;
+
+    reconnectTimer = xTimerCreateStatic("mqttReconnTmr", pdMS_TO_TICKS(reconnectTimeoutMsDflt), pdFALSE,
+        (void*) this, reconnectTimeoutDispatch, &reconnectTimerBuf);
 
     for(auto& sub : subscriptions) {
         sub.valid = false;
@@ -48,6 +53,8 @@ MqttManager::~MqttManager()
         xTimerStop(publishMsgInFlightTimer[pos], portMAX_DELAY);
     }
 
+    xTimerStop(reconnectTimer, portMAX_DELAY);
+
     for(auto& sub : subscriptions) {
         if(nullptr != sub.topic) {
             free(sub.topic);
@@ -59,7 +66,8 @@ MqttManager::~MqttManager()
     if(subscribeMutex) vSemaphoreDelete(subscribeMutex);
 }
 
-MqttManager::err_t MqttManager::init(const char* host, uint16_t port, bool ssl, const char* user, const char* password, const char* clientId)
+MqttManager::err_t MqttManager::init(const char* host, uint16_t port, bool ssl, const char* user, const char* password, 
+    const char* clientId, bool cleanSession, int reconnectTimeoutMs)
 {
     err_t ret = ERR_OK;
 
@@ -94,9 +102,9 @@ MqttManager::err_t MqttManager::init(const char* host, uint16_t port, bool ssl, 
             lwt_qos : QOS_AT_MOST_ONCE,
             lwt_retain : true,
             lwt_msg_len : 0,
-            disable_clean_session : 1,
+            disable_clean_session : (cleanSession == true) ? 0 : 1,
             keepalive : clientKeepAlive,
-            disable_auto_reconnect : false,
+            disable_auto_reconnect : true,
             user_context : (void*) this,
             task_prio : MQTT_TASK_PRIORITY,
             task_stack : MQTT_TASK_STACK,
@@ -112,6 +120,15 @@ MqttManager::err_t MqttManager::init(const char* host, uint16_t port, bool ssl, 
         clientSettingsOk = true;
 
         client = esp_mqtt_client_init(&clientSettings);
+
+        // setup auto reconnect
+        if(reconnectTimeoutMs >= 0) {
+            reconnectTimeoutTicks = pdMS_TO_TICKS(reconnectTimeoutMs);
+            autoReconnect = true;
+        } else {
+            reconnectTimeoutTicks = 1; // just set something useful (i.e. >0)
+            autoReconnect = false;
+        }
     }
 
     return ret;
@@ -122,6 +139,11 @@ MqttManager::err_t MqttManager::start(void)
     err_t ret = ERR_OK;
 
     if(clientSettingsOk) {
+        // reset stop request flag
+        stopRequested = false;
+
+        // stop any pending reconnect timeouts before starting again
+        xTimerStop(reconnectTimer, portMAX_DELAY);
         esp_mqtt_client_start(client);
     } else {
         ESP_LOGE(logTag, "MQTT settings not okay! Did you run init()?");
@@ -141,6 +163,12 @@ MqttManager::err_t MqttManager::start(void)
 void MqttManager::stop(void)
 {
     if(client) {
+        // set flag that we do want to stop (i.e. don't auto-reconnect)
+        stopRequested = true;
+
+        // stop any pending reconnect timeouts
+        xTimerStop(reconnectTimer, portMAX_DELAY);
+
         // Signalize that we are disconnected even though we aren't yet.
         // This is done to ensure no new publishes are being accepted.
         if((xEventGroupGetBits(clientEvents) & clientEventConnected) != 0) {
@@ -182,6 +210,8 @@ esp_err_t MqttManager::clientEventHandler(esp_mqtt_event_handle_t event)
         ESP_LOGE("unknown", "No valid MqttManager available to dispatch events to!");
     } else {
         switch (event->event_id) {
+            case MQTT_EVENT_BEFORE_CONNECT:
+                break;
             case MQTT_EVENT_CONNECTED:
                 manager->clientConnected(event);
                 break;
@@ -206,7 +236,7 @@ esp_err_t MqttManager::clientEventHandler(esp_mqtt_event_handle_t event)
                 break;
             
             default:
-                ESP_LOGW(manager->logTag, "Unkown event type received!");
+                ESP_LOGW(manager->logTag, "Unkown event type (%d) received!", event->event_id);
                 break;
         }
     }
@@ -217,6 +247,7 @@ esp_err_t MqttManager::clientEventHandler(esp_mqtt_event_handle_t event)
 void MqttManager::clientConnected(esp_mqtt_event_handle_t eventData)
 {
     ESP_LOGI(logTag, "Connected.");
+    xTimerStop(reconnectTimer, portMAX_DELAY);
     xEventGroupSetBits(clientEvents, clientEventConnected);
     xEventGroupClearBits(clientEvents, clientEventDisconnected);
 
@@ -235,6 +266,12 @@ void MqttManager::clientDisconnected(esp_mqtt_event_handle_t eventData)
     ESP_LOGI(logTag, "Disconnected.");
     xEventGroupClearBits(clientEvents, clientEventConnected);
     xEventGroupSetBits(clientEvents, clientEventDisconnected);
+
+    if(!stopRequested && autoReconnect) {
+        ESP_LOGI(logTag, "Starting reconnect timer.");
+        // Note: change period will also start the timer!
+        xTimerChangePeriod(reconnectTimer, reconnectTimeoutTicks, portMAX_DELAY);
+    }
 }
 
 void MqttManager::clientPublished(esp_mqtt_event_handle_t eventData)
@@ -539,4 +576,19 @@ MqttManager::err_t MqttManager::subscribe(const char *topic, qos_t qos, subscrip
     }
 
     return ret;
+}
+
+
+void MqttManager::reconnectTimeoutDispatch(TimerHandle_t timer)
+{
+    MqttManager* mgr = (MqttManager*) pvTimerGetTimerID(timer);
+
+    if(nullptr == mgr) {
+        ESP_LOGE("unknown", "No valid MqttManager available to dispatch reconnect timeout event to!");
+    } else {
+        if(mgr->autoReconnect) {
+            ESP_LOGI(mgr->logTag, "Reconnecting.");
+            mgr->start();
+        }
+    }
 }
