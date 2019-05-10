@@ -76,7 +76,7 @@ private:
     bool autoReconnect = true; /**< Enable MQTT client auto reconnect. */
 
     // misc state
-    bool stopRequested = false;
+    bool stopRequested = true;
 
     void preinit(void); /**< Helper function to prepare internal state, which is called by both constructors. */
 

@@ -16,7 +16,7 @@ void MqttManager::preinit(void)
 {
     client = nullptr;
     clientSettingsOk = false;
-    stopRequested = false;
+    stopRequested = true;
     clientEvents = xEventGroupCreate();
 
     publishMutex = xSemaphoreCreateMutexStatic(&publishMutexBuf);
@@ -168,7 +168,7 @@ MqttManager::err_t MqttManager::start(void)
 
 void MqttManager::stop(void)
 {
-    if(client) {
+    if(client && !stopRequested) {
         // set flag that we do want to stop (i.e. don't auto-reconnect)
         stopRequested = true;
 
