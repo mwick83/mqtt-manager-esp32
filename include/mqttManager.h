@@ -69,6 +69,7 @@ private:
     const TickType_t publishMsgInFlightTimeout = pdMS_TO_TICKS(3000); /**< Time in OS ticks to wait for a publish message acknowledge. */
     static const uint32_t subscriptionsMax = 32; /**< Maximum number of subscriptions the manager can handle. */
     const int reconnectTimeoutMsDflt = 10000; /**< MQTT client reconnect timeout in milliseconds (default). */
+    const int connectTimeoutTicks = pdMS_TO_TICKS(1500); /**< Time in OS ticks to wait for a successfull connection. */
 
     // general config options which my be changed at runtime
     TickType_t reconnectTimeoutTicks = pdMS_TO_TICKS(10000); /**< MQTT client reconnect timeout in ticks. */
@@ -133,11 +134,14 @@ private:
     static void clientPublishTimeoutDispatch(TimerHandle_t timer);
     void clientPublishTimeout(uint16_t msgId);
 
-    // reconnect timer
+    // timers
     TimerHandle_t reconnectTimer;
     StaticTimer_t reconnectTimerBuf;
+    TimerHandle_t connectTimer;
+    StaticTimer_t connectTimerBuf;
 
     static void reconnectTimeoutDispatch(TimerHandle_t timer);
+    static void connectTimeoutDispatch(TimerHandle_t timer);
 };
 
 #endif /* MQTT_MANAGER_H */

@@ -30,6 +30,8 @@ void MqttManager::preinit(void)
 
     reconnectTimer = xTimerCreateStatic("mqttReconnTmr", pdMS_TO_TICKS(reconnectTimeoutMsDflt), pdFALSE,
         (void*) this, reconnectTimeoutDispatch, &reconnectTimerBuf);
+    connectTimer = xTimerCreateStatic("mqttConnTmr", connectTimeoutTicks, pdFALSE,
+        (void*) this, connectTimeoutDispatch, &connectTimerBuf);
 
     for(auto& sub : subscriptions) {
         sub.valid = false;
@@ -54,6 +56,7 @@ MqttManager::~MqttManager()
     }
 
     xTimerStop(reconnectTimer, portMAX_DELAY);
+    xTimerStop(connectTimer, portMAX_DELAY);
 
     for(auto& sub : subscriptions) {
         if(nullptr != sub.topic) {
@@ -144,7 +147,10 @@ MqttManager::err_t MqttManager::start(void)
 
         // stop any pending reconnect timeouts before starting again
         xTimerStop(reconnectTimer, portMAX_DELAY);
+
+        // connet to server + start connect timer
         esp_mqtt_client_start(client);
+        xTimerStart(reconnectTimer, portMAX_DELAY);
     } else {
         ESP_LOGE(logTag, "MQTT settings not okay! Did you run init()?");
         ret = ERR_INVALID_CFG;
@@ -166,8 +172,9 @@ void MqttManager::stop(void)
         // set flag that we do want to stop (i.e. don't auto-reconnect)
         stopRequested = true;
 
-        // stop any pending reconnect timeouts
+        // stop any pending timeouts
         xTimerStop(reconnectTimer, portMAX_DELAY);
+        xTimerStop(connectTimer, portMAX_DELAY);
 
         // Signalize that we are disconnected even though we aren't yet.
         // This is done to ensure no new publishes are being accepted.
@@ -247,6 +254,7 @@ esp_err_t MqttManager::clientEventHandler(esp_mqtt_event_handle_t event)
 void MqttManager::clientConnected(esp_mqtt_event_handle_t eventData)
 {
     ESP_LOGI(logTag, "Connected.");
+    xTimerStop(connectTimer, portMAX_DELAY);
     xTimerStop(reconnectTimer, portMAX_DELAY);
     xEventGroupSetBits(clientEvents, clientEventConnected);
     xEventGroupClearBits(clientEvents, clientEventDisconnected);
@@ -590,5 +598,18 @@ void MqttManager::reconnectTimeoutDispatch(TimerHandle_t timer)
             ESP_LOGI(mgr->logTag, "Reconnecting.");
             mgr->start();
         }
+    }
+}
+
+void MqttManager::connectTimeoutDispatch(TimerHandle_t timer)
+{
+    MqttManager* mgr = (MqttManager*) pvTimerGetTimerID(timer);
+
+    if(nullptr == mgr) {
+        ESP_LOGE("unknown", "No valid MqttManager available to dispatch connect timeout event to!");
+    } else {
+        ESP_LOGW(mgr->logTag, "Timeout waiting for broker connection! Reconnecting.");
+        mgr->stop();
+        mgr->start();
     }
 }
