@@ -61,7 +61,7 @@ private:
 
     // fixed configuration options
     const int clientKeepAlive = 120; /**< MQTT client keep alive timeout in seconds. */
-    const TickType_t lockAcquireTimeout = pdMS_TO_TICKS(250); /**< Maximum publish lock acquisition time in OS ticks. */
+    const TickType_t lockAcquireTimeout = pdMS_TO_TICKS(500); /**< Maximum publish lock acquisition time in OS ticks. */
     static const uint32_t publishMsgInFlightMax = MQTT_BUFFER_SIZE_BYTE / 128; /**< Maximum number of publish messages that have outstanding responses.
                                                                                 * The value is calculated from the MQTT_BUF_SIZE and an assumed average 
                                                                                 * raw messages size of 128 bytes.
