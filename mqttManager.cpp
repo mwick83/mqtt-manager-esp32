@@ -314,13 +314,22 @@ void MqttManager::clientData(esp_mqtt_event_handle_t eventData)
 {
     unsigned int topicLen = eventData->topic_len;
     unsigned int dataLen = eventData->data_len;
+    unsigned int totalDataLen = eventData->total_data_len;
 
-    if((nullptr != eventData->topic) && (nullptr != eventData->data)) {
+    bool dropFragmentedData = false;
+
+    // check if this is the start of a fragmented data event
+    if (totalDataLen != dataLen) {
+        ESP_LOGW(logTag, "Fragmented data event detected. Dropping it.");
+        dropFragmentedData = true;
+    }
+
+    if ((!dropFragmentedData) && (nullptr != eventData->topic) && (nullptr != eventData->data)) {
         bool called = false;
-        for(auto& sub : subscriptions) {
-            if(sub.valid) {
-                if((strlen(sub.topic) == topicLen) && (0 == strncmp(sub.topic, eventData->topic, topicLen))) {
-                    if(nullptr != sub.callback) sub.callback(eventData->topic, topicLen, eventData->data, dataLen);
+        for (auto& sub : subscriptions) {
+            if (sub.valid) {
+                if ((strlen(sub.topic) == topicLen) && (0 == strncmp(sub.topic, eventData->topic, topicLen))) {
+                    if (nullptr != sub.callback) sub.callback(eventData->topic, topicLen, eventData->data, dataLen);
                     called = true;
                     break;
                 }
