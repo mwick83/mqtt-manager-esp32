@@ -300,14 +300,14 @@ void MqttManager::clientPublished(esp_mqtt_event_handle_t eventData)
         }
 
         if(pos == publishMsgInFlightMax) {
-            ESP_LOGW(logTag, "Publish msg_id not found. It could have timed out.");
+            ESP_LOGW(logTag, "Publish msg_id (%d/0x%04x) not found. It could have timed out.", eventData->msg_id, eventData->msg_id);
         }
 
         inFlightCnt = publishMsgInFlightCnt;
         xSemaphoreGive(publishMutex);
     }
 
-    ESP_LOGD(logTag, "Published (msg_id: 0x%04x). Current in-flight cnt: %d/%d", eventData->msg_id, inFlightCnt, publishMsgInFlightMax);
+    ESP_LOGD(logTag, "Published (msg_id: %d/0x%04x). Current in-flight cnt: %d/%d", eventData->msg_id, eventData->msg_id, inFlightCnt, publishMsgInFlightMax);
 }
 
 void MqttManager::clientData(esp_mqtt_event_handle_t eventData)
@@ -511,7 +511,7 @@ void MqttManager::clientPublishTimeout(uint16_t msgId)
     if(pdFALSE == xSemaphoreTake(publishMutex, lockAcquireTimeout)) {
         ESP_LOGE(logTag, "Couldn't acquire publish lock within timeout!");
     } else {
-        ESP_LOGW(logTag, "Publishing timed out (msg_id: 0x%04x). Releasing it anyway.", msgId);
+        ESP_LOGW(logTag, "Publishing timed out (msg_id: %d/0x%04x). Releasing it anyway.", msgId, msgId);
 
         int cnt;
         for(cnt=0; cnt < publishMsgInFlightMax; cnt++) {
@@ -523,7 +523,7 @@ void MqttManager::clientPublishTimeout(uint16_t msgId)
         }
 
         if(cnt == publishMsgInFlightMax) {
-            ESP_LOGW(logTag, "Publish msg_id not found! Successful publish could have cleared it in the meantime.");
+            ESP_LOGW(logTag, "Publish msg_id (%d/0x%04x) not found! Successful publish could have cleared it in the meantime.", msgId, msgId);
         }
 
         xSemaphoreGive(publishMutex);
